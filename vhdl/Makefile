@@ -1,9 +1,15 @@
+DESIGN     := risc_v
+DESIGN_SRC := risc_v_pkg.vhd risc_v.vhd
+TESTBENCH  := tb_${DESIGN}
+
 .PHONY: sim
-sim: risc_v.vhd tb_risc_v.vhd
-	ghdl -a --std=08 risc_v.vhd tb_risc_v.vhd
-	ghdl -e --std=08 tb_risc_v
-	ghdl -r --std=08 tb_risc_v --vcd=tb_risc_v.vcd --wave=tb_risc_v.ghw
+sim: tb_${DESIGN}.ghw
+
+${TESTBENCH}.ghw : ${DESIGN_SRC} ${TESTBENCH}.vhd
+	ghdl -a --std=08 ${DESIGN_SRC} ${TESTBENCH}.vhd
+	ghdl -e --std=08 ${TESTBENCH}
+	ghdl -r --std=08 ${TESTBENCH} --vcd=${TESTBENCH}.vcd --wave=$@
 
 .PHONY: clean
 clean:
-	rm tb_risc_v tb_risc_v.ghw tb_risc_v.vcd work* *.o
+	rm ${TESTBENCH} ${TESTBENCH}.ghw ${TESTBENCH}.vcd work* *.o

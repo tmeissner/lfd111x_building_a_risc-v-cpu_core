@@ -2,6 +2,8 @@ library ieee;
   use ieee.std_logic_1164.all;
   use ieee.numeric_std.all;
 
+use work.risc_v_pkg.all;
+
 
 entity risc_v is
   port (
@@ -14,31 +16,6 @@ end entity;
 
 architecture rtl of risc_v is
 
-  type t_slv_array is array (natural range <>) of std_logic_vector;
-  subtype t_reg_file is t_slv_array(0 to 31)(31 downto 0);
-  subtype t_imem is t_slv_array(natural range 0 to 8)(31 downto 0);
-
-  -- Test program
-  constant c_imem : t_imem := (
-    -- ADDI, x14, x0, 0
-    b"0000_0000_0000_0000_0000_0111_0001_0011",
-    -- ADDI, x12, x0, 1010
-    b"0000_0000_1010_0000_0000_0110_0001_0011",
-    -- ADDI, x13, x0, 1
-    b"0000_0000_0001_0000_0000_0110_1001_0011",
-    -- LOOP begin
-    -- ADD, x14, x13, x14
-    b"0000_0000_1110_0110_1000_0111_0011_0011",
-    -- ADDI, x13, x13, 1
-    b"0000_0000_0001_0110_1000_0110_1001_0011",
-    -- BLT, x13, x12, 1111111111000 (branch to LOOP begin if x13 < x12)
-    b"1111_1110_1100_0110_1100_1100_1110_0011",
-    -- ADDI, x0, x0, 1010 (Test write ignore to x0)
-    b"0000_0000_1010_0000_0000_0000_0001_0011",
-    -- ADDI, x30, x14, 111111010100
-    b"1111_1101_0100_0111_0000_1111_0001_0011",
-    -- BGE, x0, x0, 0 (Infinite loop)
-    b"0000_0000_0000_0000_0101_0000_0110_0011");
 
   signal s_reg_file : t_reg_file;
 
@@ -48,9 +25,10 @@ architecture rtl of risc_v is
   signal s_src1_value : std_logic_vector(31 downto 0);
   signal s_src2_value : std_logic_vector(31 downto 0);
 
-  signal s_pc        : unsigned(31 downto 0);
-  signal s_next_pc   : unsigned(31 downto 0);
-  signal s_br_tgt_br : unsigned(31 downto 0);
+  signal s_pc          : unsigned(31 downto 0);
+  signal s_next_pc     : unsigned(31 downto 0);
+  signal s_br_tgt_br   : unsigned(31 downto 0);
+  signal s_jalr_tgt_pc : unsigned(31 downto 0);
 
   signal s_result : signed(31 downto 0);
 
@@ -67,6 +45,10 @@ architecture rtl of risc_v is
   signal s_rs2_valid    : boolean;
   signal s_funct7_valid : boolean;
   signal s_imm_valid    : boolean;
+  signal s_is_lui       : boolean;
+  signal s_is_auipc     : boolean;
+  signal s_is_jal       : boolean;
+  signal s_is_jalr      : boolean;
   signal s_is_beq       : boolean;
   signal s_is_bne       : boolean;
   signal s_is_blt       : boolean;
@@ -74,7 +56,26 @@ architecture rtl of risc_v is
   signal s_is_bltu      : boolean;
   signal s_is_bgeu      : boolean;
   signal s_is_addi      : boolean;
+  signal s_is_slti      : boolean;
+  signal s_is_sltiu     : boolean;
+  signal s_is_xori      : boolean;
+  signal s_is_ori       : boolean;
+  signal s_is_andi      : boolean;
+  signal s_is_slli      : boolean;
+  signal s_is_srli      : boolean;
+  signal s_is_srai      : boolean;
   signal s_is_add       : boolean;
+  signal s_is_sub       : boolean;
+  signal s_is_sll       : boolean;
+  signal s_is_slt       : boolean;
+  signal s_is_sltu      : boolean;
+  signal s_is_xor       : boolean;
+  signal s_is_srl       : boolean;
+  signal s_is_sra       : boolean;
+  signal s_is_or        : boolean;
+  signal s_is_and       : boolean;
+  signal s_is_load      : boolean;
+  signal s_is_store     : boolean;
 
   alias a_opcode : std_logic_vector(6 downto 0) is s_instr(6 downto 0);
   alias a_rd     : std_logic_vector(4 downto 0) is s_instr(11 downto 7);
@@ -86,8 +87,9 @@ architecture rtl of risc_v is
 begin
 
   -- prog counter next state logic
-  s_next_pc <= 32x"0"      when not reset_n_i  else
-               s_br_tgt_br when s_taken_br else
+  s_next_pc <= 32x"0"        when not reset_n_i          else
+               s_br_tgt_br   when s_taken_br or s_is_jal else
+               s_jalr_tgt_pc when s_is_jalr              else
                s_pc + 4;
 
   -- prog counter register
@@ -146,6 +148,10 @@ begin
 
   -- Instruction code decoding
   s_dec_bits <= (a_funct7(5), a_funct3, a_opcode);
+  s_is_lui   <= std_match(s_dec_bits, b"-_---_0110111");
+  s_is_auipc <= std_match(s_dec_bits, b"-_---_0010111");
+  s_is_jal   <= std_match(s_dec_bits, b"-_---_1101111");
+  s_is_jalr  <= std_match(s_dec_bits, b"-_000_1100111");
   s_is_beq   <= std_match(s_dec_bits, b"-_000_1100011");
   s_is_bne   <= std_match(s_dec_bits, b"-_001_1100011");
   s_is_blt   <= std_match(s_dec_bits, b"-_100_1100011");
@@ -153,7 +159,28 @@ begin
   s_is_bltu  <= std_match(s_dec_bits, b"-_110_1100011");
   s_is_bgeu  <= std_match(s_dec_bits, b"-_111_1100011");
   s_is_addi  <= std_match(s_dec_bits, b"-_000_0010011");
-  s_is_add   <= s_dec_bits =  b"0_000_0110011";
+  s_is_slti  <= std_match(s_dec_bits, b"-_010_0010011");
+  s_is_sltiu <= std_match(s_dec_bits, b"-_011_0010011");
+  s_is_xori  <= std_match(s_dec_bits, b"-_100_0010011");
+  s_is_ori   <= std_match(s_dec_bits, b"-_110_0010011");
+  s_is_andi  <= std_match(s_dec_bits, b"-_111_0010011");
+  s_is_slli  <= s_dec_bits = b"0_001_0010011";
+  s_is_srli  <= s_dec_bits = b"0_101_0010011";
+  s_is_srai  <= s_dec_bits = b"1_101_0010011";
+  s_is_add   <= s_dec_bits = b"0_000_0110011";
+  s_is_sub   <= s_dec_bits = b"1_000_0110011";
+  s_is_sll   <= s_dec_bits = b"0_001_0110011";
+  s_is_slt   <= s_dec_bits = b"0_010_0110011";
+  s_is_sltu  <= s_dec_bits = b"0_011_0110011";
+  s_is_xor   <= s_dec_bits = b"0_100_0110011";
+  s_is_srl   <= s_dec_bits = b"0_101_0110011";
+  s_is_sra   <= s_dec_bits = b"1_101_0110011";
+  s_is_or    <= s_dec_bits = b"0_110_0110011";
+  s_is_and   <= s_dec_bits = b"0_111_0110011";
+  -- LB, LH, LW, LBU, LHU
+  s_is_load <= a_opcode = "0000011";
+  -- SB, SH, SW
+  s_is_store <= a_opcode = "0100011";
 
   -- ALU
   s_result <= signed(s_src1_value) + signed(s_imm)        when s_is_addi else
@@ -168,7 +195,8 @@ begin
                 unsigned(s_src1_value) <  unsigned(s_src2_value) when s_is_bltu else
                 unsigned(s_src1_value) >= unsigned(s_src2_value) when s_is_bgeu else
                 false;
-  s_br_tgt_br <= s_pc + unsigned(s_imm);
+  s_br_tgt_br   <= s_pc + unsigned(s_imm);
+  s_jalr_tgt_pc <= unsigned(s_src1_value) + unsigned(s_imm);
 
   -- Register file
   process (clk_i) is
