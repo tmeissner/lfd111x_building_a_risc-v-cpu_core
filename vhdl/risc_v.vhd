@@ -18,12 +18,14 @@ architecture rtl of risc_v is
 
 
   signal s_reg_file : t_reg_file;
+  signal s_dmem : t_dmem;
 
-  signal s_instr    : std_logic_vector(31 downto 0);
-  signal s_imm      : std_logic_vector(31 downto 0);
-  signal s_dec_bits : std_logic_vector(10 downto 0);
+  signal s_instr      : std_logic_vector(31 downto 0);
+  signal s_imm        : std_logic_vector(31 downto 0);
+  signal s_dec_bits   : std_logic_vector(10 downto 0);
   signal s_src1_value : std_logic_vector(31 downto 0);
   signal s_src2_value : std_logic_vector(31 downto 0);
+  signal s_ld_data    : std_logic_vector(31 downto 0);
 
   signal s_pc          : unsigned(31 downto 0);
   signal s_next_pc     : unsigned(31 downto 0);
@@ -180,10 +182,10 @@ begin
   -- LB, LH, LW, LBU, LHU
   s_is_load <= a_opcode = "0000011";
   -- SB, SH, SW
-  s_is_store <= a_opcode = "0100011";
+  s_is_store <= s_is_s_instr;
 
   -- ALU
-  s_result <= signed(s_src1_value) + signed(s_imm)        when s_is_addi else
+  s_result <= signed(s_src1_value) + signed(s_imm)        when s_is_addi or s_is_load or s_is_store else
               signed(s_src1_value) + signed(s_src2_value) when s_is_add  else
               32x"0";
 
@@ -204,8 +206,10 @@ begin
     if rising_edge(clk_i) then
       if reset_n_i = '0' then
         s_reg_file <= (others => 32x"0");
-      else
-        if s_rd_valid and a_rd /= 5x"0" then
+      elsif s_rd_valid and a_rd /= 5x"0" then
+        if s_is_load then
+          s_reg_file(to_integer(unsigned(a_rd))) <= std_logic_vector(s_ld_data);
+        else
           s_reg_file(to_integer(unsigned(a_rd))) <= std_logic_vector(s_result);
         end if;
       end if;
@@ -216,5 +220,20 @@ begin
                   (others => '0');
   s_src2_value <= s_reg_file(to_integer(unsigned(a_rs2))) when s_rs2_valid else
                   (others => '0');
+
+  -- Data memory
+  process (clk_i) is
+  begin
+    if rising_edge(clk_i) then
+      if reset_n_i = '0' then
+        s_dmem <= (others => 32x"0");
+      elsif s_is_store then
+        s_dmem(to_integer(unsigned(s_result(6 downto 2)))) <= std_logic_vector(s_src2_value);
+        end if;
+    end if;
+  end process;
+
+  s_ld_data <= s_dmem(to_integer(unsigned(s_result(6 downto 2)))) when s_is_load else
+               (others => '0');
 
 end architecture rtl;

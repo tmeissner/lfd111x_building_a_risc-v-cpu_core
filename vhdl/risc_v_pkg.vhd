@@ -8,6 +8,7 @@ package risc_v_pkg is
   type t_slv_array is array (natural range <>) of std_logic_vector;
   subtype t_reg_file is t_slv_array(0 to 31)(31 downto 0);
   subtype t_imem is t_slv_array(natural range 0 to 57)(31 downto 0);
+  subtype t_dmem is t_reg_file;
 
 
   -- Test program
