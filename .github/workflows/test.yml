@@ -1,0 +1,11 @@
+name: 'tests'
+
+on: [ push, pull_request ]
+
+jobs:
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - run: docker run --rm -tv $(pwd):/src -w /src/vhdl -e BUILD_NAME=ACCEPTANCE ghdl/vunit:llvm make sim
