@@ -1,5 +1,8 @@
 library ieee;
   use ieee.std_logic_1164.all;
+  use ieee.numeric_std.all;
+  use ieee.math_real.all;
+
 
 
 package risc_v_pkg is
@@ -9,7 +12,6 @@ package risc_v_pkg is
   subtype t_reg_file is t_slv_array(0 to 31)(31 downto 0);
   subtype t_imem is t_slv_array(natural range 0 to 57)(31 downto 0);
   subtype t_dmem is t_reg_file;
-
 
   -- Test program
   constant c_imem : t_imem := (
@@ -130,5 +132,82 @@ package risc_v_pkg is
     -- (J) JAL x0, 0
     b"00000000000000000000000001101111");
 
+  function init_reg_file return t_reg_file;
+  function init_dmem return t_dmem;
+
+  function shift_right (data  : in std_logic_vector(31 downto 0);
+                        index : in std_logic_vector) return std_logic_vector;
+
+  function shift_left (data  : in std_logic_vector(31 downto 0);
+                       index : in std_logic_vector) return std_logic_vector;
+
+  function shift_arith_right (data  : in std_logic_vector(31 downto 0);
+                              index : in std_logic_vector) return std_logic_vector;
+
+  function to_std_logic (data : in boolean) return std_logic;
+
+  procedure check_equal (a, b : in std_logic_vector; prefix : in string := "");
+
 
 end package risc_v_pkg;
+
+
+package body risc_v_pkg is
+
+
+  function init_reg_file return t_reg_file is
+    variable v_reg_file : t_reg_file;
+  begin
+    for i in t_reg_file'range loop
+      v_reg_file(i) := std_logic_vector(to_unsigned(i, 32));
+    end loop;
+    return v_reg_file;
+  end init_reg_file;
+
+  function init_dmem return t_dmem is
+    variable v_dmem : t_dmem;
+  begin
+    for i in t_dmem'range loop
+      v_dmem(t_dmem'high-i) := std_logic_vector(to_unsigned(i, 32));
+    end loop;
+    return v_dmem;
+  end init_dmem;
+
+  function shift_right (data  : in std_logic_vector(31 downto 0);
+                        index : in std_logic_vector) return std_logic_vector is
+  begin
+    return std_logic_vector(shift_right(unsigned(data),
+                            to_integer(unsigned(index))));
+  end function shift_right;
+
+  function shift_left (data  : in std_logic_vector(31 downto 0);
+                       index : in std_logic_vector) return std_logic_vector is
+  begin
+    return std_logic_vector(shift_left(unsigned(data),
+                            to_integer(unsigned(index))));
+  end function shift_left;
+
+  function shift_arith_right (data  : in std_logic_vector(31 downto 0);
+                              index : in std_logic_vector) return std_logic_vector is
+  begin
+    return std_logic_vector(shift_right(signed(data),
+                            to_integer(unsigned(index))));
+  end function shift_arith_right;
+
+  function to_std_logic (data : in boolean) return std_logic is
+  begin
+    if data then
+      return '1';
+    else
+      return '0';
+    end if;
+  end function to_std_logic;
+
+  procedure check_equal (a, b : in std_logic_vector; prefix : in string := "") is
+  begin
+    assert a = b
+      report prefix & "expected 0x" & to_hstring(b) & ", got 0x" & to_hstring(a);
+  end procedure check_equal;
+
+
+end package body risc_v_pkg;

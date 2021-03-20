@@ -2,13 +2,18 @@ library ieee;
   use ieee.std_logic_1164.all;
   use ieee.numeric_std.all;
 
+use std.env.all;
+
 use work.risc_v_pkg.all;
 
 
 entity risc_v is
   port (
-    reset_n_i : in std_logic;
-    clk_i     : in std_logic
+    reset_n_i  : in std_logic;
+    clk_i      : in std_logic;
+    -- test out
+    reg_file_o : out t_reg_file;
+    dmem_o     : out t_dmem
   );
 end entity;
 
@@ -18,7 +23,7 @@ architecture rtl of risc_v is
 
 
   signal s_reg_file : t_reg_file;
-  signal s_dmem : t_dmem;
+  signal s_dmem     : t_dmem;
 
   signal s_instr      : std_logic_vector(31 downto 0);
   signal s_imm        : std_logic_vector(31 downto 0);
@@ -26,13 +31,14 @@ architecture rtl of risc_v is
   signal s_src1_value : std_logic_vector(31 downto 0);
   signal s_src2_value : std_logic_vector(31 downto 0);
   signal s_ld_data    : std_logic_vector(31 downto 0);
+  signal s_result     : std_logic_vector(31 downto 0);
+  signal s_sltu_rslt  : std_logic_vector(31 downto 0);
+  signal s_sltiu_rslt : std_logic_vector(31 downto 0);
 
   signal s_pc          : unsigned(31 downto 0);
   signal s_next_pc     : unsigned(31 downto 0);
   signal s_br_tgt_br   : unsigned(31 downto 0);
   signal s_jalr_tgt_pc : unsigned(31 downto 0);
-
-  signal s_result : signed(31 downto 0);
 
   signal s_taken_br     : boolean;
   signal s_is_r_instr   : boolean;
@@ -78,6 +84,8 @@ architecture rtl of risc_v is
   signal s_is_and       : boolean;
   signal s_is_load      : boolean;
   signal s_is_store     : boolean;
+  signal s_src_sgn_eq   : boolean;
+  signal s_imm_sgn_eq   : boolean;
 
   alias a_opcode : std_logic_vector(6 downto 0) is s_instr(6 downto 0);
   alias a_rd     : std_logic_vector(4 downto 0) is s_instr(11 downto 7);
@@ -87,6 +95,11 @@ architecture rtl of risc_v is
   alias a_funct7 : std_logic_vector(6 downto 0) is s_instr(31 downto 25);
 
 begin
+
+
+  -- Test outs
+  reg_file_o <= s_reg_file;
+  dmem_o     <= s_dmem;
 
   -- prog counter next state logic
   s_next_pc <= 32x"0"        when not reset_n_i          else
@@ -184,10 +197,44 @@ begin
   -- SB, SH, SW
   s_is_store <= s_is_s_instr;
 
+  -- Some subexpressions
+  s_src_sgn_eq <= s_src1_value(31) = s_src2_value(31);
+  s_imm_sgn_eq <= s_src1_value(31) = s_imm(31);
+  -- SLTU & SLTI (set if less than, unsigned)
+  s_sltu_rslt  <= 31x"0" & to_std_logic(unsigned(s_src1_value) < unsigned(s_src2_value));
+  s_sltiu_rslt <= 31x"0" & to_std_logic(unsigned(s_src1_value) < unsigned(s_imm));
   -- ALU
-  s_result <= signed(s_src1_value) + signed(s_imm)        when s_is_addi or s_is_load or s_is_store else
-              signed(s_src1_value) + signed(s_src2_value) when s_is_add  else
-              32x"0";
+  s_result <=
+    s_src1_value and s_imm                                        when s_is_andi    else
+    s_src1_value or  s_imm                                        when s_is_ori     else
+    s_src1_value xor s_imm                                        when s_is_xori    else
+    std_logic_vector(signed(s_src1_value) + signed(s_imm))        when s_is_addi or
+                                                                       s_is_load or
+                                                                       s_is_store   else
+    shift_left(s_src1_value, s_imm(5 downto 0))                   when s_is_slli    else
+    shift_right(s_src1_value, s_imm(5 downto 0))                  when s_is_srli    else
+    s_src1_value and s_src2_value                                 when s_is_and     else
+    s_src1_value or  s_src2_value                                 when s_is_or      else
+    s_src1_value xor s_src2_value                                 when s_is_xor     else
+    std_logic_vector(signed(s_src1_value) + signed(s_src2_value)) when s_is_add     else
+    std_logic_vector(signed(s_src1_value) - signed(s_src2_value)) when s_is_sub     else
+    shift_left(s_src1_value, s_src2_value(4 downto 0))            when s_is_sll     else
+    shift_right(s_src1_value, s_src2_value(4 downto 0))           when s_is_srl     else
+    s_sltu_rslt                                                   when s_is_sltu    else
+    s_sltiu_rslt                                                  when s_is_sltiu   else
+    s_imm(31 downto 12) & 12x"0"                                  when s_is_lui     else
+    std_logic_vector(s_pc + unsigned(s_imm))                      when s_is_auipc   else
+    std_logic_vector(s_pc + 4)                                    when s_is_jal or
+                                                                       s_is_jalr    else
+    s_sltu_rslt                                                   when s_is_slt and
+                                                                       s_src_sgn_eq else
+    31x"0" & s_src1_value(31)                                     when s_is_slt     else
+    s_sltiu_rslt                                                  when s_is_slti and
+                                                                       s_imm_sgn_eq else
+    31x"0" & s_src1_value(31)                                     when s_is_slti    else
+    shift_arith_right(s_src1_value, s_src2_value(4 downto 0))     when s_is_sra     else
+    shift_arith_right(s_src1_value, s_imm(4 downto 0))            when s_is_srai    else
+    32x"0";
 
   -- Branch logic
   s_taken_br <= s_src1_value  = s_src2_value                     when s_is_beq  else
@@ -202,16 +249,14 @@ begin
 
   -- Register file
   process (clk_i) is
+    variable v_value : std_logic_vector(31 downto 0);
   begin
     if rising_edge(clk_i) then
       if reset_n_i = '0' then
-        s_reg_file <= (others => 32x"0");
+        s_reg_file <= init_reg_file;
       elsif s_rd_valid and a_rd /= 5x"0" then
-        if s_is_load then
-          s_reg_file(to_integer(unsigned(a_rd))) <= std_logic_vector(s_ld_data);
-        else
-          s_reg_file(to_integer(unsigned(a_rd))) <= std_logic_vector(s_result);
-        end if;
+        v_value := std_logic_vector(s_ld_data) when s_is_load else s_result;
+        s_reg_file(to_integer(unsigned(a_rd))) <= v_value;
       end if;
     end if;
   end process;
@@ -226,14 +271,15 @@ begin
   begin
     if rising_edge(clk_i) then
       if reset_n_i = '0' then
-        s_dmem <= (others => 32x"0");
+        s_dmem <= init_dmem;
       elsif s_is_store then
         s_dmem(to_integer(unsigned(s_result(6 downto 2)))) <= std_logic_vector(s_src2_value);
-        end if;
+      end if;
     end if;
   end process;
 
   s_ld_data <= s_dmem(to_integer(unsigned(s_result(6 downto 2)))) when s_is_load else
                (others => '0');
+
 
 end architecture rtl;
